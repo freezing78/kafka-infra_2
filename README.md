@@ -3,7 +3,7 @@
 в папке /opt/ создается структура папок и файлов как приведена в проекте  (в данную структуру часть файлов была записана согласно инструкций приведенных ниже)
 - Приложение запускается с машины IP 10.127.1.4 в IntelliJ IDEA  
 ----------------
-##  АСТРОЙКА СТЭКА  
+##  НАСТРОЙКА СТЭКА  
 #Зайти в консоль контейнера в kafka conect и выполните команды
 yum update -y  
 yum install -y wget tar unzip  
@@ -215,7 +215,7 @@ COPY ./provisioning /etc/grafana/provisioning
 COPY ./dashboards /var/lib/grafana/dashboards/  
 #Образ уже имеет правильные права по умолчанию   
 
-# Создадим конфигурационный файл для JMX  
+#Создадим конфигурационный файл для JMX  
 sudo tee /opt/infra_template/kafka-connect/kafka-connect.yml << 'EOF'  
 lowercaseOutputName: true  
 lowercaseOutputLabelNames: true  
@@ -254,9 +254,8 @@ rules:
     
   - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(.+)'  
     name: "kafka_connect_rebalance_$1"  
-    type: GAUGE  
+    type: GAUGE
     
-  # Дебаг - захватываем все остальные метрики  
   - pattern: '.*'  
 EOF  
   
