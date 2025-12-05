@@ -1,0 +1,54 @@
+{
+  "dashboard": {
+    "title": "Kafka Connect Monitoring",
+    "description": "Мониторинг Debezium PostgreSQL Connector",
+    "tags": ["kafka", "connect", "debezium"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Состояние Kafka Connect",
+        "type": "stat",
+        "targets": [{
+          "expr": "up{job=\"kafka-connect\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "green"}
+              ]
+            },
+            "mappings": [
+              {"value": 0, "text": "OFFLINE"},
+              {"value": 1, "text": "ONLINE"}
+            ],
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Общее количество записей",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "sum(rate(kafka_connect_source_record_write_total[5m]))",
+          "legendFormat": "Всего записей/сек",
+          "refId": "A"
+        }],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "10s"
+  },
+  "overwrite": true
+}

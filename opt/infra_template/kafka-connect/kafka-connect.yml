@@ -1,0 +1,41 @@
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+whitelistObjectNames:
+  - "kafka.connect:*"
+  - "kafka.consumer:*"
+  - "kafka.producer:*"
+  - "com.automation.vertica.kafka.connect:*"
+
+rules:
+  # Основные метрики Kafka Connect
+  - pattern: "kafka.connect<type=connect-worker-metrics><>(.+)"
+    name: "kafka_connect_worker_$1"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_connector_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_source_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_sink_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(.+)'
+    name: "kafka_connect_rebalance_$1"
+    type: GAUGE
+  
+  # Дебаг - захватываем все остальные метрики
+  - pattern: '.*'

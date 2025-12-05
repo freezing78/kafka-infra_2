@@ -1,0 +1,57 @@
+groups:
+  - name: kafka_connect_alerts
+    rules:
+      # Алерт на недоступность Kafka Connect
+      - alert: KafkaConnectDown
+        expr: up{job="kafka-connect"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: kafka-connect
+        annotations:
+          summary: "Kafka Connect недоступен"
+          description: "Kafka Connect не отвечает более 1 минуты"
+      
+      # Алерт на высокую задержку репликации
+      - alert: HighReplicationLag
+        expr: debezium_postgres_replication_lag_ms > 30000
+        for: 2m
+        labels:
+          severity: warning
+          component: debezium
+        annotations:
+          summary: "Высокая задержка репликации Debezium"
+          description: "Задержка репликации {{ $value }}ms превышает порог 30s"
+      
+      # Алерт на ошибки коннектора
+      - alert: ConnectorErrors
+        expr: rate(kafka_connect_source_write_errors[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: kafka-connect
+        annotations:
+          summary: "Ошибки в Kafka Connect коннекторе"
+          description: "Коннектор {{ $labels.connector }} имеет ошибки записи"
+      
+      # Алерт на переполнение очереди
+      - alert: QueueOverflow
+        expr: kafka_connect_source_active_count > 1000
+        for: 3m
+        labels:
+          severity: warning
+          component: kafka-connect
+        annotations:
+          summary: "Переполнение очереди обработки"
+          description: "Активных записей: {{ $value }}"
+      
+      # Алерт на низкую скорость обработки
+      - alert: LowProcessingRate
+        expr: kafka_connect_source_write_rate < 1
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka-connect
+        annotations:
+          summary: "Низкая скорость обработки данных"
+          description: "Скорость записи: {{ $value }} записей/сек"

@@ -1,0 +1,35 @@
+groups:
+  - name: debezium_alerts
+    rules:
+      # Алерт на ошибки Debezium
+      - alert: DebeziumErrors
+        expr: debezium_postgres_errors_total > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: debezium
+        annotations:
+          summary: "Ошибки в Debezium коннекторе"
+          description: "Debezium коннектор имеет ошибки"
+      
+      # Алерт на остановку snapshot
+      - alert: SnapshotStalled
+        expr: debezium_postgres_snapshot_current_table > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: debezium
+        annotations:
+          summary: "Snapshot Debezium застрял"
+          description: "Snapshot не прогрессирует более 10 минут"
+      
+      # Алерт на отсутствие событий
+      - alert: NoEventsProcessed
+        expr: rate(debezium_postgres_events_total[10m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: debezium
+        annotations:
+          summary: "Debezium не обрабатывает события"
+          description: "Нет новых событий более 5 минут"
