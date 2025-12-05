@@ -1,0 +1,572 @@
+version: "3.5"
+services:
+
+
+
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    container_name: postgres4
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres-user
+      POSTGRES_PASSWORD: postgres-pw
+      POSTGRES_DB: customers
+    networks:
+      - proxynet
+
+  kafka-0:
+    image: bitnamilegacy/kafka:3.7.1-debian-12-r9
+    environment:
+      &kafka-common-env      # ← ANCHOR ДЛЯ environment
+      KAFKA_ENABLE_KRAFT: yes
+      ALLOW_PLAINTEXT_LISTENER: yes
+      KAFKA_KRAFT_CLUSTER_ID: practicum
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka-0:9093,1@kafka-1:9093,2@kafka-2:9093
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: true
+      # Плюс уникальные настройки для каждого нода:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-0:9092,EXTERNAL://127.0.0.1:9094
+    restart: always
+    ports:
+      - "9094:9094"
+    volumes:
+      - kafka_0_data:/bitnami/kafka
+    networks:
+      - proxynet
+
+  kafka-1:
+    image: bitnamilegacy/kafka:3.7.1-debian-12-r9
+    environment:
+      <<: *kafka-common-env      # ← ИСПОЛЬЗУЕМ ANCHOR
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9095
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,EXTERNAL://127.0.0.1:9095
+    restart: always
+    ports:
+      - "9095:9095"
+    volumes:
+      - kafka_1_data:/bitnami/kafka
+    networks:
+      - proxynet
+
+  kafka-2:
+    image: bitnamilegacy/kafka:3.7.1-debian-12-r9
+    environment:
+      <<: *kafka-common-env      # ← ИСПОЛЬЗУЕМ ANCHOR
+      KAFKA_CFG_NODE_ID: 2
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9096
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,EXTERNAL://127.0.0.1:9096
+    restart: always
+    ports:
+      - "9096:9096"
+    volumes:
+      - kafka_2_data:/bitnami/kafka
+    networks:
+      - proxynet
+
+  schema-registry:
+    image: bitnamilegacy/schema-registry:8.0.0-debian-12-r5
+    ports:
+      - '8081:8081'
+    depends_on:
+      - kafka-0
+      - kafka-1
+      - kafka-2
+    environment:
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKA_BROKERS: PLAINTEXT://kafka-0:9092,PLAINTEXT://kafka-1:9092,PLAINTEXT://kafka-2:9092
+    networks:
+      - proxynet
+
+  ui:
+    image: provectuslabs/kafka-ui:v0.7.0
+    restart: always
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092,kafka-2:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+      # Дополнительные настройки
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    depends_on:
+      - kafka-0
+      - kafka-1
+      - kafka-2
+      - schema-registry
+      - kafka-connect
+    networks:
+      - proxynet
+
+  kafka-connect:
+    build:
+      context: /opt/infra_template/kafka-connect
+    ports:
+      - "8083:8083"
+      - "9875:9875"
+      - "9876:9876"
+    depends_on:
+      - kafka-0
+      - kafka-1
+      - kafka-2
+      - schema-registry
+      - postgres
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka-0:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'kafka-connect'
+
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-config-storage'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offset-storage'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status-storage'
+
+      CONNECT_KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081/'
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL:  'http://schema-registry:8081/'
+      # Export JMX metrics to :9876/metrics for Prometheus
+      KAFKA_JMX_PORT: '9875'
+      KAFKA_OPTS: "-javaagent:/opt/jmx_prometheus_javaagent-0.15.0.jar=9876:/opt/kafka-connect.yml"
+      # Read connection password from file
+      CONNECT_CONFIG_PROVIDERS: "file"
+      CONNECT_CONFIG_PROVIDERS_FILE_CLASS: "org.apache.kafka.common.config.provider.FileConfigProvider"
+
+      CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+    volumes:
+      - /opt/infra_template/confluent-hub-components/:/etc/kafka-connect/jars
+    networks:
+      - proxynet
+
+  prometheus:
+    image: prom/prometheus:v2.30.3
+    ports:
+      - 9090:9090
+    volumes:
+      - /opt/infra_template/prometheus:/etc/prometheus
+    command: --web.enable-lifecycle --config.file=/etc/prometheus/prometheus.yml
+    links:
+      - kafka-connect
+    networks:
+      - proxynet
+
+  grafana:
+    build:
+      context: /opt/infra_template/grafana
+    ports:
+      - 3000:3000
+    networks:
+      - proxynet
+
+
+networks:
+  proxynet:
+    name: custom_network
+
+volumes:
+  kafka_0_data:
+  kafka_1_data:
+  kafka_2_data:
+
+
+
+
+
+
+
+
+
+
+
+----------------
+
+# Зайти в контейнер в kafka conect
+yum update -y
+yum install -y wget tar unzip
+yum install -y wget which tar
+
+# Создайте директорию для плагинов
+mkdir -p /usr/share/java/debezium-connector-postgresql
+cd /usr/share/java
+
+# Копируйте архив в контейнер (подставьте правильное имя контейнера)
+docker cp /tmp/debezium-connector-postgres-3.3.2.Final-plugin.tar.gz kafka-infra-kafka-connect-1:/tmp/debezium.tar.gz
+
+# Распакуйте (предполагая, что файл уже скопирован)
+tar -xzf /tmp/debezium.tar.gz -C /usr/share/java/debezium-connector-postgresql --strip-components=1
+
+# В контейнере установите JDBC драйвер
+bash -c "
+    # Скачайте PostgreSQL JDBC драйвер
+    echo 'Скачивание PostgreSQL JDBC драйвера...'
+    wget -q https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -O /usr/share/java/postgresql-42.7.3.jar || \
+    curl -s -L https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -o /usr/share/java/postgresql-42.7.3.jar || \
+    echo 'Не удалось скачать JDBC драйвер, попробуйте вручную'
+"
+
+# Проверьте что установилось
+bash -c "
+    echo '=== Проверка установки ==='
+    echo '1. Файлы Debezium:'
+    ls -la /usr/share/java/debezium-connector-postgresql/*.jar | head -10
+    echo ''
+    echo '2. JDBC драйвер:'
+    ls -la /usr/share/java/postgresql*.jar 2>/dev/null || echo 'JDBC драйвер не найден'
+    echo ''
+    echo '3. CONNECT_PLUGIN_PATH:'
+    echo \$CONNECT_PLUGIN_PATH
+"
+
+# Проверьте в контейнере kafka-infra-kafka-connect-1cd 
+curl -s http://localhost:8083/connector-plugins | grep -i debezium
+
+# Или более подробно:
+bash -c '
+    curl -s http://localhost:8083/connector-plugins | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+debezium = [p for p in data if \"postgresql\" in p[\"class\"].lower()]
+if debezium:
+    print(\"✅ Debezium PostgreSQL Connector установлен!\")
+    print(f\"   Класс: {debezium[0][\"class\"]}\")
+    print(f\"   Версия: {debezium[0][\"version\"]}\")
+else:
+    print(\"❌ Debezium не найден. Все плагины:\")
+    for p in data:
+        print(f\"   - {p[\"class\"]}\")
+"
+'
+
+
+cat > /tmp/debezium-config.json << 'EOF'
+{
+  "name": "debezium-customers-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres-user",
+    "database.password": "postgres-pw",
+    "database.dbname": "customers",
+    
+    "database.server.name": "customers-db",
+    
+    "table.include.list": "public.users,public.orders",
+    
+    "column.include.list": "public.users.id,public.users.name,public.users.email,public.users.created_at,public.orders.id,public.orders.user_id,public.orders.product_name,public.orders.quantity,public.orders.order_date",
+    
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_slot",
+    "publication.name": "debezium_pub",
+    "publication.autocreate.mode": "filtered",
+    
+    "snapshot.mode": "initial",
+    "snapshot.locking.mode": "minimal",
+    
+    "heartbeat.interval.ms": "5000",
+    "heartbeat.action.query": "INSERT INTO debezium_heartbeat (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET ts = CURRENT_TIMESTAMP",
+    
+    "decimal.handling.mode": "double",
+    "time.precision.mode": "adaptive",
+    "tombstones.on.delete": "true",
+    
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "false",
+    "transforms.unwrap.delete.handling.mode": "rewrite",
+    
+    "message.key.columns": "public.users:id,public.orders:id",
+    
+    "include.schema.changes": "false"
+  }
+}
+EOF
+
+
+# Создайте конфиг файл
+cat > /tmp/debezium-final.json << 'EOF'
+{
+  "name": "debezium-customers-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres-user",
+    "database.password": "postgres-pw",
+    "database.dbname": "customers",
+    
+    "topic.prefix": "customers-db",
+    
+    "table.include.list": "public.users,public.orders",
+    "schema.include.list": "public",
+    
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_slot",
+    "publication.name": "debezium_pub",
+    "publication.autocreate.mode": "filtered",
+    
+    "snapshot.mode": "initial",
+    "snapshot.locking.mode": "none",
+    
+    "heartbeat.interval.ms": "5000",
+    "heartbeat.topics.prefix": "__debezium_heartbeat",
+    
+    "decimal.handling.mode": "double",
+    "time.precision.mode": "adaptive",
+    "tombstones.on.delete": "true",
+    
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    
+    "include.schema.changes": "false",
+    "provide.transaction.metadata": "false"
+  }
+}
+EOF
+
+# Создайте коннектор
+curl -X POST -H "Content-Type: application/json" --data @/tmp/debezium-final.json http://localhost:8083/connectors
+
+# Проверьте
+curl http://localhost:8083/connectors
+
+
+#измените конфигурационный файл postgres напрямую из контейнера
+# Найдите конфигурационный файл
+docker exec kafka-infra-postgres-1 find / -name "postgresql.conf" -type f 2>/dev/null
+
+# Обычное расположение в Alpine PostgreSQL
+docker exec kafka-infra-postgres-1 ls -la /var/lib/postgresql/data/
+
+# Добавьте настройки в конец файла
+docker exec kafka-infra-postgres-1 sh -c "
+    echo '' >> /var/lib/postgresql/data/postgresql.conf
+    echo '# Debezium Logical Replication Settings' >> /var/lib/postgresql/data/postgresql.conf
+    echo 'wal_level = logical' >> /var/lib/postgresql/data/postgresql.conf
+    echo 'max_wal_senders = 10' >> /var/lib/postgresql/data/postgresql.conf
+    echo 'max_replication_slots = 10' >> /var/lib/postgresql/data/postgresql.conf
+    echo 'wal_keep_size = 1GB' >> /var/lib/postgresql/data/postgresql.conf
+"
+
+# Проверьте что добавилось
+docker exec kafka-infra-postgres-1 tail -10 /var/lib/postgresql/data/postgresql.conf
+
+#перегрузить контейнер
+
+psql -U postgres-user -d customers -c "SELECT pg_drop_replication_slot('debezium_slot');" 2>/dev/null || echo "Слот уже удален или не существует"
+
+#Теперь при записи данных в таблицу Базы данных создадутся топики
+-Топик customers-db.public.users - сообщение (данные таблицы users)
+-Топик customers-db.public.orders - сообщение (данные таблицы orders)
+- Топик __debezium-heartbeat.customers-db - сообщения (heartbeat работает)
+- Debezium Connector в состоянии RUNNING
+
+Итоговая конфигурация:
+
+Источник: PostgreSQL база customers
+Таблицы: users и orders (только эти!)
+Формат: Avro с Schema Registry
+Топики: customers-db.public.users, customers-db.public.orders
+Режим: Snapshot + Real-time изменения
+
+Теперь у вас работает полный CDC (Change Data Capture) пайплайн:
+Изменения в PostgreSQL → Debezium → Kafka → Потребители
+Все операции (INSERT, UPDATE, DELETE) отслеживаются
+Данные в формате Avro с контролем схемы
+
+## Задание 2
+Создайте/проверьте файл /opt/infra_template/prometheus/prometheus.yml
+Создайте /opt/infra_template/kafka-connect/kafka-connect.yml для Debezium
+Создайте /opt/infra_template/prometheus/kafka_alerts.yml
+Создайте /opt/infra_template/prometheus/debezium_alerts.yml
+sudo mkdir -p /opt/infra_template/prometheus/rules
+
+
+# Создаем datasource конфигурацию
+sudo tee /opt/infra_template/grafana/provisioning/datasources/prometheus.yml << 'EOF'
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+EOF
+
+# Создаем dashboards конфигурацию
+sudo tee /opt/infra_template/grafana/provisioning/dashboards/dashboards.yml << 'EOF'
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards
+EOF
+
+# Создадим дашборд для Kafka Connect
+sudo tee /opt/infra_template/grafana/dashboards/kafka-connect.json << 'EOF'
+{
+  "dashboard": {
+    "title": "Kafka Connect Monitoring",
+    "description": "Мониторинг Debezium PostgreSQL Connector",
+    "tags": ["kafka", "connect", "debezium"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Состояние Kafka Connect",
+        "type": "stat",
+        "targets": [{
+          "expr": "up{job=\"kafka-connect\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "green"}
+              ]
+            },
+            "mappings": [
+              {"value": 0, "text": "OFFLINE"},
+              {"value": 1, "text": "ONLINE"}
+            ],
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Общее количество записей",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "sum(rate(kafka_connect_source_record_write_total[5m]))",
+          "legendFormat": "Всего записей/сек",
+          "refId": "A"
+        }],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "10s"
+  },
+  "overwrite": true
+}
+EOF
+
+# Создаем /opt/infra_template/grafana/Dockerfile
+FROM grafana/grafana:8.1.6
+# Установка плагинов
+RUN grafana-cli plugins install grafana-piechart-panel
+# Копирование конфигурационных файлов
+COPY ./config.ini /etc/grafana/config.ini
+COPY ./provisioning /etc/grafana/provisioning
+# Создание директории для дашбордов и копирование
+COPY ./dashboards /var/lib/grafana/dashboards/
+# Образ уже имеет правильные права по умолчанию
+
+# Создадим конфигурационный файл для JMX
+sudo tee /opt/infra_template/kafka-connect/kafka-connect.yml << 'EOF'
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+whitelistObjectNames:
+  - "kafka.connect:*"
+  - "kafka.consumer:*"
+  - "kafka.producer:*"
+  - "com.automation.vertica.kafka.connect:*"
+
+rules:
+  # Основные метрики Kafka Connect
+  - pattern: "kafka.connect<type=connect-worker-metrics><>(.+)"
+    name: "kafka_connect_worker_$1"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_connector_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_source_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>(.+)'
+    name: "kafka_connect_sink_$3"
+    labels:
+      connector: "$1"
+      task: "$2"
+    type: GAUGE
+  
+  - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(.+)'
+    name: "kafka_connect_rebalance_$1"
+    type: GAUGE
+  
+  # Дебаг - захватываем все остальные метрики
+  - pattern: '.*'
+EOF
+
+# Скачаем jmx_prometheus_javaagent
+cd /opt/infra_template/kafka-connect
+sudo wget https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.17.2/jmx_prometheus_javaagent-0.17.2.jar
+
+# Создаем/обновляем Dockerfile для Kafka Connect
+sudo tee /opt/infra_template/kafka-connect/Dockerfile << 'EOF'
+FROM confluentinc/cp-kafka-connect:7.5.1
+
+# Устанавливаем JMX Prometheus агент
+COPY jmx_prometheus_javaagent-0.17.2.jar /opt/jmx_prometheus_javaagent-0.17.2.jar
+COPY kafka-connect.yml /etc/kafka-connect/kafka-connect.yml
+
+# Устанавливаем Debezium PostgreSQL connector
+RUN confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.0
+
+# Копируем дополнительные коннекторы если есть
+COPY confluent-hub-components/ /etc/kafka-connect/jars/
+
+# Экспортируем порт для JMX
+EXPOSE 9875 9876
+EOF
+
+
