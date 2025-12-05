@@ -28,7 +28,7 @@ bash -c "
     echo 'Не удалось скачать JDBC драйвер, попробуйте вручную'  
 "  
 
-#Проверьте что установилось  
+#Проверьте что установилось 
 bash -c "  
     echo '=== Проверка установки ==='  
     echo '1. Файлы Debezium:'  
@@ -41,7 +41,7 @@ bash -c "
     echo \$CONNECT_PLUGIN_PATH  
 "  
 
-#Проверьте в контейнере kafka-infra-kafka-connect-1cd  
+#Проверьте в контейнере kafka-infra-kafka-connect-1cd на локальной машине где установлен Portainer   
 curl -s http://localhost:8083/connector-plugins | grep -i debezium  
 
 #Или более подробно:  
@@ -60,131 +60,142 @@ else:
         print(f\"   - {p[\"class\"]}\")  
 "  
 '  
+#Создайте конфиг файл  
+cat > /tmp/debezium-final.json << 'EOF'  
+{  
+  "name": "debezium-customers-connector",  
+  "config": {  
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",  
+    "database.hostname": "postgres",  
+    "database.port": "5432",  
+    "database.user": "postgres-user",  
+    "database.password": "postgres-pw",  
+    "database.dbname": "customers",  
+      
+    "topic.prefix": "customers-db",  
+      
+    "table.include.list": "public.users,public.orders",  
+    "schema.include.list": "public",  
+      
+    "plugin.name": "pgoutput",  
+    "slot.name": "debezium_slot",  
+    "publication.name": "debezium_pub",  
+    "publication.autocreate.mode": "filtered",  
+      
+    "snapshot.mode": "initial",  
+    "snapshot.locking.mode": "none",  
+      
+    "heartbeat.interval.ms": "5000",  
+    "heartbeat.topics.prefix": "__debezium_heartbeat",  
+      
+    "decimal.handling.mode": "double",  
+    "time.precision.mode": "adaptive",  
+    "tombstones.on.delete": "true",  
+      
+    "key.converter": "io.confluent.connect.avro.AvroConverter",  
+    "value.converter": "io.confluent.connect.avro.AvroConverter",  
+    "key.converter.schema.registry.url": "http://schema-registry:8081",  
+    "value.converter.schema.registry.url": "http://schema-registry:8081",  
+      
+    "include.schema.changes": "false",  
+    "provide.transaction.metadata": "false"  
+  }  
+}  
+EOF  
 
+#Создайте коннектор  
+curl -X POST -H "Content-Type: application/json" --data @/tmp/debezium-final.json http://localhost:8083/connectors  
+  
+#Проверьте  
+curl http://localhost:8083/connectors  
 
+#измените конфигурационный файл postgres напрямую из контейнера  
+#Найдите конфигурационный файл  
+docker exec kafka-infra-postgres-1 find / -name "postgresql.conf" -type f 2>/dev/null  
+  
+#Обычное расположение в Alpine PostgreSQL  
+docker exec kafka-infra-postgres-1 ls -la /var/lib/postgresql/data/  
+  
+#Добавьте настройки в конец файла  
+docker exec kafka-infra-postgres-1 sh -c "  
+    echo '' >> /var/lib/postgresql/data/postgresql.conf  
+    echo '# Debezium Logical Replication Settings' >> /var/lib/postgresql/data/postgresql.conf  
+    echo 'wal_level = logical' >> /var/lib/postgresql/data/postgresql.conf  
+    echo 'max_wal_senders = 10' >> /var/lib/postgresql/data/postgresql.conf  
+    echo 'max_replication_slots = 10' >> /var/lib/postgresql/data/postgresql.conf  
+    echo 'wal_keep_size = 1GB' >> /var/lib/postgresql/data/postgresql.conf  
+"  
 
+#Проверьте что добавилось  
+docker exec kafka-infra-postgres-1 tail -10 /var/lib/postgresql/data/postgresql.conf  
 
-# Создайте конфиг файл
-cat > /tmp/debezium-final.json << 'EOF'
-{
-  "name": "debezium-customers-connector",
-  "config": {
-    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-    "database.hostname": "postgres",
-    "database.port": "5432",
-    "database.user": "postgres-user",
-    "database.password": "postgres-pw",
-    "database.dbname": "customers",
-    
-    "topic.prefix": "customers-db",
-    
-    "table.include.list": "public.users,public.orders",
-    "schema.include.list": "public",
-    
-    "plugin.name": "pgoutput",
-    "slot.name": "debezium_slot",
-    "publication.name": "debezium_pub",
-    "publication.autocreate.mode": "filtered",
-    
-    "snapshot.mode": "initial",
-    "snapshot.locking.mode": "none",
-    
-    "heartbeat.interval.ms": "5000",
-    "heartbeat.topics.prefix": "__debezium_heartbeat",
-    
-    "decimal.handling.mode": "double",
-    "time.precision.mode": "adaptive",
-    "tombstones.on.delete": "true",
-    
-    "key.converter": "io.confluent.connect.avro.AvroConverter",
-    "value.converter": "io.confluent.connect.avro.AvroConverter",
-    "key.converter.schema.registry.url": "http://schema-registry:8081",
-    "value.converter.schema.registry.url": "http://schema-registry:8081",
-    
-    "include.schema.changes": "false",
-    "provide.transaction.metadata": "false"
-  }
-}
-EOF
+#перегрузить контейнер  
 
-# Создайте коннектор
-curl -X POST -H "Content-Type: application/json" --data @/tmp/debezium-final.json http://localhost:8083/connectors
+psql -U postgres-user -d customers -c "SELECT pg_drop_replication_slot('debezium_slot');" 2>/dev/null || echo "Слот уже удален или не существует"  
 
-# Проверьте
-curl http://localhost:8083/connectors
+#Подключитесь к БД порт 5432, создайте таблицы и записи в ней
+CREATE TABLE users (  
+    id SERIAL PRIMARY KEY,  
+    name VARCHAR(100),  
+    email VARCHAR(100),  
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  
+);  
+CREATE TABLE orders (  
+    id SERIAL PRIMARY KEY,  
+    user_id INT REFERENCES users(id),  
+    product_name VARCHAR(100),  
+    quantity INT,  
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP  
+);   
 
+INSERT INTO users (name, email) VALUES ('John Doe', 'john@example.com');  
+INSERT INTO orders (user_id, product_name, quantity) VALUES (1, 'Product A', 2);  
 
-#измените конфигурационный файл postgres напрямую из контейнера
-# Найдите конфигурационный файл
-docker exec kafka-infra-postgres-1 find / -name "postgresql.conf" -type f 2>/dev/null
+#Теперь при записи данных в таблицу Базы данных создадутся топики  
+-Топик customers-db.public.users - сообщение (данные таблицы users)  
+-Топик customers-db.public.orders - сообщение (данные таблицы orders)  
+- Топик __debezium-heartbeat.customers-db - сообщения (heartbeat работает)  
+- Debezium Connector в состоянии RUNNING  
 
-# Обычное расположение в Alpine PostgreSQL
-docker exec kafka-infra-postgres-1 ls -la /var/lib/postgresql/data/
+#Итоговая конфигурация: 
+Источник: PostgreSQL база customers  
+Таблицы: users и orders (только эти!)  
+Формат: Avro с Schema Registry  
+Топики: customers-db.public.users, customers-db.public.orders  
+Режим: Snapshot + Real-time изменения  
 
-# Добавьте настройки в конец файла
-docker exec kafka-infra-postgres-1 sh -c "
-    echo '' >> /var/lib/postgresql/data/postgresql.conf
-    echo '# Debezium Logical Replication Settings' >> /var/lib/postgresql/data/postgresql.conf
-    echo 'wal_level = logical' >> /var/lib/postgresql/data/postgresql.conf
-    echo 'max_wal_senders = 10' >> /var/lib/postgresql/data/postgresql.conf
-    echo 'max_replication_slots = 10' >> /var/lib/postgresql/data/postgresql.conf
-    echo 'wal_keep_size = 1GB' >> /var/lib/postgresql/data/postgresql.conf
-"
-
-# Проверьте что добавилось
-docker exec kafka-infra-postgres-1 tail -10 /var/lib/postgresql/data/postgresql.conf
-
-#перегрузить контейнер
-
-psql -U postgres-user -d customers -c "SELECT pg_drop_replication_slot('debezium_slot');" 2>/dev/null || echo "Слот уже удален или не существует"
-
-#Теперь при записи данных в таблицу Базы данных создадутся топики
--Топик customers-db.public.users - сообщение (данные таблицы users)
--Топик customers-db.public.orders - сообщение (данные таблицы orders)
-- Топик __debezium-heartbeat.customers-db - сообщения (heartbeat работает)
-- Debezium Connector в состоянии RUNNING
-
-Итоговая конфигурация:
-
-Источник: PostgreSQL база customers
-Таблицы: users и orders (только эти!)
-Формат: Avro с Schema Registry
-Топики: customers-db.public.users, customers-db.public.orders
-Режим: Snapshot + Real-time изменения
-
-Теперь у вас работает полный CDC (Change Data Capture) пайплайн:
-Изменения в PostgreSQL → Debezium → Kafka → Потребители
-Все операции (INSERT, UPDATE, DELETE) отслеживаются
-Данные в формате Avro с контролем схемы
+Теперь у вас работает полный CDC (Change Data Capture) пайплайн:  
+Изменения в PostgreSQL → Debezium → Kafka → Потребители  
+Все операции (INSERT, UPDATE, DELETE) отслеживаются  
+Данные в формате Avro с контролем схемы  
 
 ## Задание 2
-Создайте/проверьте файл /opt/infra_template/prometheus/prometheus.yml
-Создайте /opt/infra_template/kafka-connect/kafka-connect.yml для Debezium
-Создайте /opt/infra_template/prometheus/kafka_alerts.yml
-Создайте /opt/infra_template/prometheus/debezium_alerts.yml
-sudo mkdir -p /opt/infra_template/prometheus/rules
+Создайте/проверьте файл /opt/infra_template/prometheus/prometheus.yml  
+Создайте /opt/infra_template/kafka-connect/kafka-connect.yml для Debezium  
+Создайте /opt/infra_template/prometheus/kafka_alerts.yml  
+Создайте /opt/infra_template/prometheus/debezium_alerts.yml  
+sudo mkdir -p /opt/infra_template/prometheus/rules  
 
-
-# Создаем datasource конфигурацию
-sudo tee /opt/infra_template/grafana/provisioning/datasources/prometheus.yml << 'EOF'
-apiVersion: 1
-
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
-    editable: true
-EOF
-
-# Создаем dashboards конфигурацию
-sudo tee /opt/infra_template/grafana/provisioning/dashboards/dashboards.yml << 'EOF'
-apiVersion: 1
-
-providers:
-  - name: 'default'
-    orgId: 1
+#Создаем datasource конфигурацию  
+sudo tee /opt/infra_template/grafana/provisioning/datasources/prometheus.yml << 'EOF'  
+apiVersion: 1  
+  
+datasources:  
+  - name: Prometheus  
+    type: prometheus  
+    access: proxy  
+    url: http://prometheus:9090  
+    isDefault: true  
+    editable: true  
+EOF  
+  
+#Создаем dashboards конфигурацию  
+sudo tee /opt/infra_template/grafana/provisioning/dashboards/dashboards.yml << 'EOF'  
+apiVersion: 1  
+  
+providers:  
+  - name: 'default'  
+    orgId: 1  
     folder: ''
     type: file
     disableDeletion: false
