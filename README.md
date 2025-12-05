@@ -1,6 +1,6 @@
 ## Развертывание кластера
 - В Portainer docker-compose.yml (Web-интерфейс для управления Docker Compose) Развертывание на машине с IP 10.127.1.2  
-в папке /opt/ создается структура папок и файлов как приведена в проекте  
+в папке /opt/ создается структура папок и файлов как приведена в проекте  (в данную структуру часть файлов была записана согласно инструкций приведенных ниже)
 - Приложение запускается с машины IP 10.127.1.4 в IntelliJ IDEA  
 ----------------
 ##  АСТРОЙКА СТЭКА  
@@ -196,149 +196,86 @@ apiVersion: 1
 providers:  
   - name: 'default'  
     orgId: 1  
-    folder: ''
-    type: file
-    disableDeletion: false
-    updateIntervalSeconds: 10
-    options:
-      path: /etc/grafana/dashboards
-EOF
-
-# Создадим дашборд для Kafka Connect
-sudo tee /opt/infra_template/grafana/dashboards/kafka-connect.json << 'EOF'
-{
-  "dashboard": {
-    "title": "Kafka Connect Monitoring",
-    "description": "Мониторинг Debezium PostgreSQL Connector",
-    "tags": ["kafka", "connect", "debezium"],
-    "timezone": "browser",
-    "panels": [
-      {
-        "id": 1,
-        "title": "Состояние Kafka Connect",
-        "type": "stat",
-        "targets": [{
-          "expr": "up{job=\"kafka-connect\"}",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }],
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"value": 0, "text": "OFFLINE"},
-              {"value": 1, "text": "ONLINE"}
-            ],
-            "unit": "short"
-          }
-        },
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
-      },
-      {
-        "id": 2,
-        "title": "Общее количество записей",
-        "type": "graph",
-        "datasource": "Prometheus",
-        "targets": [{
-          "expr": "sum(rate(kafka_connect_source_record_write_total[5m]))",
-          "legendFormat": "Всего записей/сек",
-          "refId": "A"
-        }],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
-      }
-    ],
-    "time": {
-      "from": "now-1h",
-      "to": "now"
-    },
-    "refresh": "10s"
-  },
-  "overwrite": true
-}
-EOF
-
-# Создаем /opt/infra_template/grafana/Dockerfile
-FROM grafana/grafana:8.1.6
-# Установка плагинов
-RUN grafana-cli plugins install grafana-piechart-panel
-# Копирование конфигурационных файлов
-COPY ./config.ini /etc/grafana/config.ini
-COPY ./provisioning /etc/grafana/provisioning
-# Создание директории для дашбордов и копирование
-COPY ./dashboards /var/lib/grafana/dashboards/
-# Образ уже имеет правильные права по умолчанию
-
-# Создадим конфигурационный файл для JMX
-sudo tee /opt/infra_template/kafka-connect/kafka-connect.yml << 'EOF'
-lowercaseOutputName: true
-lowercaseOutputLabelNames: true
-whitelistObjectNames:
-  - "kafka.connect:*"
-  - "kafka.consumer:*"
-  - "kafka.producer:*"
-  - "com.automation.vertica.kafka.connect:*"
-
-rules:
-  # Основные метрики Kafka Connect
-  - pattern: "kafka.connect<type=connect-worker-metrics><>(.+)"
-    name: "kafka_connect_worker_$1"
-    type: GAUGE
+    folder: ''  
+    type: file  
+    disableDeletion: false  
+    updateIntervalSeconds: 10  
+    options:  
+      path: /etc/grafana/dashboards  
+EOF  
   
-  - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>(.+)'
-    name: "kafka_connect_connector_$3"
-    labels:
-      connector: "$1"
-      task: "$2"
-    type: GAUGE
+#Создаем /opt/infra_template/grafana/Dockerfile  
+FROM grafana/grafana:8.1.6  
+#Установка плагинов 
+RUN grafana-cli plugins install grafana-piechart-panel  
+#Копирование конфигурационных файлов  
+COPY ./config.ini /etc/grafana/config.ini  
+COPY ./provisioning /etc/grafana/provisioning  
+#Создание директории для дашбордов и копирование  
+COPY ./dashboards /var/lib/grafana/dashboards/  
+#Образ уже имеет правильные права по умолчанию   
+
+# Создадим конфигурационный файл для JMX  
+sudo tee /opt/infra_template/kafka-connect/kafka-connect.yml << 'EOF'  
+lowercaseOutputName: true  
+lowercaseOutputLabelNames: true  
+whitelistObjectNames:  
+  - "kafka.connect:*"  
+  - "kafka.consumer:*"  
+  - "kafka.producer:*"  
+  - "com.automation.vertica.kafka.connect:*"  
   
-  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>(.+)'
-    name: "kafka_connect_source_$3"
-    labels:
-      connector: "$1"
-      task: "$2"
-    type: GAUGE
+rules:  
+  #Основные метрики Kafka Connect  
+  - pattern: "kafka.connect<type=connect-worker-metrics><>(.+)"  
+    name: "kafka_connect_worker_$1"  
+    type: GAUGE  
+    
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>(.+)'  
+    name: "kafka_connect_connector_$3"  
+    labels:  
+      connector: "$1"  
+      task: "$2"  
+    type: GAUGE  
+    
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>(.+)'  
+    name: "kafka_connect_source_$3"  
+    labels:  
+      connector: "$1"  
+      task: "$2"  
+    type: GAUGE  
+    
+  - pattern: 'kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>(.+)'  
+    name: "kafka_connect_sink_$3"  
+    labels:  
+      connector: "$1"  
+      task: "$2"  
+    type: GAUGE  
+    
+  - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(.+)'  
+    name: "kafka_connect_rebalance_$1"  
+    type: GAUGE  
+    
+  # Дебаг - захватываем все остальные метрики  
+  - pattern: '.*'  
+EOF  
   
-  - pattern: 'kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>(.+)'
-    name: "kafka_connect_sink_$3"
-    labels:
-      connector: "$1"
-      task: "$2"
-    type: GAUGE
+#Скачаем jmx_prometheus_javaagent  
+cd /opt/infra_template/kafka-connect  
+sudo wget https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.17.2/jmx_prometheus_javaagent-0.17.2.jar  
+#Создаем/обновляем Dockerfile для Kafka Connect  
+sudo tee /opt/infra_template/kafka-connect/Dockerfile << 'EOF'  
+FROM confluentinc/cp-kafka-connect:7.5.1  
+#Устанавливаем JMX Prometheus агент  
+COPY jmx_prometheus_javaagent-0.17.2.jar /opt/jmx_prometheus_javaagent-0.17.2.jar  
+COPY kafka-connect.yml /etc/kafka-connect/kafka-connect.yml  
+#Устанавливаем Debezium PostgreSQL connector  
+RUN confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.0  
+#Копируем дополнительные коннекторы если есть  
+COPY confluent-hub-components/ /etc/kafka-connect/jars/  
+#Экспортируем порт для JMX  
+EXPOSE 9875 9876  
+EOF  
   
-  - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(.+)'
-    name: "kafka_connect_rebalance_$1"
-    type: GAUGE
-  
-  # Дебаг - захватываем все остальные метрики
-  - pattern: '.*'
-EOF
-
-# Скачаем jmx_prometheus_javaagent
-cd /opt/infra_template/kafka-connect
-sudo wget https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.17.2/jmx_prometheus_javaagent-0.17.2.jar
-
-# Создаем/обновляем Dockerfile для Kafka Connect
-sudo tee /opt/infra_template/kafka-connect/Dockerfile << 'EOF'
-FROM confluentinc/cp-kafka-connect:7.5.1
-
-# Устанавливаем JMX Prometheus агент
-COPY jmx_prometheus_javaagent-0.17.2.jar /opt/jmx_prometheus_javaagent-0.17.2.jar
-COPY kafka-connect.yml /etc/kafka-connect/kafka-connect.yml
-
-# Устанавливаем Debezium PostgreSQL connector
-RUN confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.0
-
-# Копируем дополнительные коннекторы если есть
-COPY confluent-hub-components/ /etc/kafka-connect/jars/
-
-# Экспортируем порт для JMX
-EXPOSE 9875 9876
-EOF
-
-
+#загружаем (import) дашборд для Kafka Connect /opt/infra_template/grafana/dashboards/dashboards_2.json  
 
