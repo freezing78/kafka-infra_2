@@ -1,65 +1,65 @@
 ## Развертывание кластера
-В Portainer docker-compose.yml (Web-интерфейс для управления Docker Compose) Развертывание на машине с IP 10.127.1.2
-в папке /opt/ создается структура папок и файлов как приведена в проекте
-Приложение запускается с машины IP 10.127.1.4 в IntelliJ IDEA
+- В Portainer docker-compose.yml (Web-интерфейс для управления Docker Compose) Развертывание на машине с IP 10.127.1.2  
+в папке /opt/ создается структура папок и файлов как приведена в проекте  
+- Приложение запускается с машины IP 10.127.1.4 в IntelliJ IDEA  
 ----------------
-##НАСТРОЙКА СТЭКА
-# Зайти в контейнер в kafka conect
-yum update -y
-yum install -y wget tar unzip
-yum install -y wget which tar
+##  АСТРОЙКА СТЭКА  
+#Зайти в консоль контейнера в kafka conect и выполните команды
+yum update -y  
+yum install -y wget tar unzip  
+yum install -y wget which tar  
 
-# Создайте директорию для плагинов
-mkdir -p /usr/share/java/debezium-connector-postgresql
-cd /usr/share/java
+#Создайте директорию для плагинов  
+mkdir -p /usr/share/java/debezium-connector-postgresql  
+cd /usr/share/java  
 
-# Копируйте архив в контейнер (подставьте правильное имя контейнера)
-docker cp /tmp/debezium-connector-postgres-3.3.2.Final-plugin.tar.gz kafka-infra-kafka-connect-1:/tmp/debezium.tar.gz
+#Копируйте архив в контейнер (подставьте правильное имя контейнера)
+docker cp /tmp/debezium-connector-postgres-3.3.2.Final-plugin.tar.gz kafka-infra-kafka-connect-1:/tmp/debezium.tar.gz  
 
-# Распакуйте (предполагая, что файл уже скопирован)
-tar -xzf /tmp/debezium.tar.gz -C /usr/share/java/debezium-connector-postgresql --strip-components=1
+#Распакуйте (предполагая, что файл уже скопирован)
+tar -xzf /tmp/debezium.tar.gz -C /usr/share/java/debezium-connector-postgresql --strip-components=1  
 
-# В контейнере установите JDBC драйвер
-bash -c "
-    # Скачайте PostgreSQL JDBC драйвер
-    echo 'Скачивание PostgreSQL JDBC драйвера...'
-    wget -q https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -O /usr/share/java/postgresql-42.7.3.jar || \
-    curl -s -L https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -o /usr/share/java/postgresql-42.7.3.jar || \
-    echo 'Не удалось скачать JDBC драйвер, попробуйте вручную'
-"
+#В контейнере установите JDBC драйвер  
+bash -c "  
+    # Скачайте PostgreSQL JDBC драйвер  
+    echo 'Скачивание PostgreSQL JDBC драйвера...'  
+    wget -q https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -O /usr/share/java/postgresql-42.7.3.jar || \  
+    curl -s -L https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -o /usr/share/java/postgresql-42.7.3.jar || \  
+    echo 'Не удалось скачать JDBC драйвер, попробуйте вручную'  
+"  
 
-# Проверьте что установилось
-bash -c "
-    echo '=== Проверка установки ==='
-    echo '1. Файлы Debezium:'
-    ls -la /usr/share/java/debezium-connector-postgresql/*.jar | head -10
-    echo ''
-    echo '2. JDBC драйвер:'
-    ls -la /usr/share/java/postgresql*.jar 2>/dev/null || echo 'JDBC драйвер не найден'
-    echo ''
-    echo '3. CONNECT_PLUGIN_PATH:'
-    echo \$CONNECT_PLUGIN_PATH
-"
+#Проверьте что установилось  
+bash -c "  
+    echo '=== Проверка установки ==='  
+    echo '1. Файлы Debezium:'  
+    ls -la /usr/share/java/debezium-connector-postgresql/*.jar | head -10  
+    echo ''  
+    echo '2. JDBC драйвер:'  
+    ls -la /usr/share/java/postgresql*.jar 2>/dev/null || echo 'JDBC драйвер не найден'  
+    echo ''  
+    echo '3. CONNECT_PLUGIN_PATH:'  
+    echo \$CONNECT_PLUGIN_PATH  
+"  
 
-# Проверьте в контейнере kafka-infra-kafka-connect-1cd 
-curl -s http://localhost:8083/connector-plugins | grep -i debezium
+#Проверьте в контейнере kafka-infra-kafka-connect-1cd  
+curl -s http://localhost:8083/connector-plugins | grep -i debezium  
 
-# Или более подробно:
-bash -c '
-    curl -s http://localhost:8083/connector-plugins | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-debezium = [p for p in data if \"postgresql\" in p[\"class\"].lower()]
-if debezium:
-    print(\"✅ Debezium PostgreSQL Connector установлен!\")
-    print(f\"   Класс: {debezium[0][\"class\"]}\")
-    print(f\"   Версия: {debezium[0][\"version\"]}\")
-else:
-    print(\"❌ Debezium не найден. Все плагины:\")
-    for p in data:
-        print(f\"   - {p[\"class\"]}\")
-"
-'
+#Или более подробно:  
+bash -c '  
+    curl -s http://localhost:8083/connector-plugins | python3 -c "  
+import json, sys  
+data = json.load(sys.stdin)  
+debezium = [p for p in data if \"postgresql\" in p[\"class\"].lower()]  
+if debezium:  
+    print(\"✅ Debezium PostgreSQL Connector установлен!\")  
+    print(f\"   Класс: {debezium[0][\"class\"]}\")  
+    print(f\"   Версия: {debezium[0][\"version\"]}\")  
+else:  
+    print(\"❌ Debezium не найден. Все плагины:\")  
+    for p in data:  
+        print(f\"   - {p[\"class\"]}\")  
+"  
+'  
 
 
 
